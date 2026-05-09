@@ -3102,6 +3102,13 @@ function dibujar() {
 // ══════════════════════════════════════════════════════════════
 async function importar() {
   if (!G.bbox){ sb('Selecciona un área en el mapa','err'); return; }
+
+  // ── Validar área contra el plan del usuario ─────────────────
+  if (typeof gtValidarArea === 'function') {
+    var permitido = await gtValidarArea(G.bbox);
+    if (!permitido) return; // gtValidarArea ya mostró el mensaje y el modal
+  }
+
   var btn = document.getElementById('btn-importar');
   var btnDXF = document.getElementById('btn-dxf');
   btn.disabled = true; btnDXF.disabled = true;
@@ -3653,6 +3660,11 @@ function descargarKML() {
 
 function descargarDXF() {
   if (!G.pts_xyz.length && !G.caminos.length && !G.edificios.length && !G.leisure.length && !G.zonas.length){ alert('Primero importa un área o datos OSM.'); return; }
+  if (typeof _GT_USER !== 'undefined' && _GT_USER && _GT_USER.plan === 'free' && G.bbox) {
+    var _area = (Math.abs(G.bbox.lat_max-G.bbox.lat_min)*111.32) * (Math.abs(G.bbox.lon_max-G.bbox.lon_min)*111.32*Math.cos((G.bbox.lat_max+G.bbox.lat_min)/2*Math.PI/180));
+    if (_area > 1.5) { if(typeof _gtInjectUI==='function'){_gtInjectUI();document.getElementById('gt-modal').style.display='flex';} sb('⚠ Área supera 1.5 km² — sube a Pro para exportar','err'); return; }
+  }
+
   var nm  = G.nombre;
   var dxf = new DXFWriter(1, 6);
 
@@ -3976,6 +3988,11 @@ function optimizarIntervalo() {
 // ══════════════════════════════════════════════════════════════
 function descargarOBJ() {
   if (!G.pts_xyz.length && !G.caminos.length && !G.edificios.length && !G.leisure.length && !G.zonas.length){ alert('Primero importa un área o datos OSM.'); return; }
+  if (typeof _GT_USER !== 'undefined' && _GT_USER && _GT_USER.plan === 'free' && G.bbox) {
+    var _area = (Math.abs(G.bbox.lat_max-G.bbox.lat_min)*111.32) * (Math.abs(G.bbox.lon_max-G.bbox.lon_min)*111.32*Math.cos((G.bbox.lat_max+G.bbox.lat_min)/2*Math.PI/180));
+    if (_area > 1.5) { if(typeof _gtInjectUI==='function'){_gtInjectUI();document.getElementById('gt-modal').style.display='flex';} sb('⚠ Área supera 1.5 km² — sube a Pro para exportar','err'); return; }
+  }
+
   var lines=[], vIdx={};
   var vCount=0;
 
@@ -4244,6 +4261,11 @@ function descargarSTL() {
 // ══════════════════════════════════════════════════════════════
 function descargarIFC() {
   if (!G.pts_xyz.length && !G.caminos.length && !G.edificios.length && !G.leisure.length && !G.zonas.length){ alert('Primero importa un área o datos OSM.'); return; }
+  if (typeof _GT_USER !== 'undefined' && _GT_USER && _GT_USER.plan === 'free' && G.bbox) {
+    var _area = (Math.abs(G.bbox.lat_max-G.bbox.lat_min)*111.32) * (Math.abs(G.bbox.lon_max-G.bbox.lon_min)*111.32*Math.cos((G.bbox.lat_max+G.bbox.lat_min)/2*Math.PI/180));
+    if (_area > 1.5) { if(typeof _gtInjectUI==='function'){_gtInjectUI();document.getElementById('gt-modal').style.display='flex';} sb('⚠ Área supera 1.5 km² — sube a Pro para exportar','err'); return; }
+  }
+
   var ts=new Date().toISOString().replace(/[-:T]/g,'').slice(0,15);
   var nm=G.nombre;
   var lines=[];
@@ -4793,6 +4815,23 @@ function pf_cancelarLinea(){
 // ── Generar perfil (flujo principal)
 function pf_generar(){
   if(!GP.linea.length||GP.linea.length<2){sb('Traza una línea primero','warn');return;}
+
+  // ── Validar largo del perfil según plan ────────────────────
+  var _pfKm=0;
+  for(var _pi=0;_pi<GP.linea.length-1;_pi++){
+    var _pa=GP.linea[_pi],_pb=GP.linea[_pi+1];
+    var _dlat=(_pb[0]-_pa[0])*111.32;
+    var _dlon=(_pb[1]-_pa[1])*111.32*Math.cos(_pa[0]*Math.PI/180);
+    _pfKm+=Math.sqrt(_dlat*_dlat+_dlon*_dlon);
+  }
+  var _pfPlan=(typeof _GT_USER!=='undefined'&&_GT_USER)?(_GT_USER.plan||'free'):'free';
+  var _pfLimites={free:1.3,pro:50,enterprise:99999};
+  var _pfLimite=_pfLimites[_pfPlan]||1.3;
+  if(_pfKm>_pfLimite){
+    sb('⚠ Perfil de '+_pfKm.toFixed(2)+'km supera el límite '+_pfPlan.toUpperCase()+' ('+_pfLimite+'km)','err');
+    if(_pfPlan==='free'&&typeof _gtInjectUI==='function'){_gtInjectUI();document.getElementById('gt-modal').style.display='flex';}
+    return;
+  }
   // Modo rápido: sin TIN, usa API de elevaciones
   if(_pf_modoRapido || !G.tris.length){
     pf_generarRapido(); return;
@@ -5105,6 +5144,23 @@ function pf_iniciarRapido(){
 
 async function pf_generarRapido(){
   if(!GP.linea.length||GP.linea.length<2){sb('Traza una línea primero','warn');return;}
+
+  // ── Validar largo del perfil según plan ────────────────────
+  var _pfKm=0;
+  for(var _pi=0;_pi<GP.linea.length-1;_pi++){
+    var _pa=GP.linea[_pi],_pb=GP.linea[_pi+1];
+    var _dlat=(_pb[0]-_pa[0])*111.32;
+    var _dlon=(_pb[1]-_pa[1])*111.32*Math.cos(_pa[0]*Math.PI/180);
+    _pfKm+=Math.sqrt(_dlat*_dlat+_dlon*_dlon);
+  }
+  var _pfPlan=(typeof _GT_USER!=='undefined'&&_GT_USER)?(_GT_USER.plan||'free'):'free';
+  var _pfLimites={free:1.3,pro:50,enterprise:99999};
+  var _pfLimite=_pfLimites[_pfPlan]||1.3;
+  if(_pfKm>_pfLimite){
+    sb('⚠ Perfil de '+_pfKm.toFixed(2)+'km supera el límite '+_pfPlan.toUpperCase()+' ('+_pfLimite+'km)','err');
+    if(_pfPlan==='free'&&typeof _gtInjectUI==='function'){_gtInjectUI();document.getElementById('gt-modal').style.display='flex';}
+    return;
+  }
 
   GP.nombre    = document.getElementById('pf-nombre').value||'Perfil-1';
   var _dsV=document.getElementById('pf-dataset')?.value||'auto'; var _dsI=DS_RESOLUCION[_dsV]||DS_RESOLUCION['srtm30m']; GP.intv=Math.max(_dsI.min,+(document.getElementById('pf-intv').value)||_dsI.min);
