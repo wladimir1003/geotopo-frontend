@@ -6,6 +6,7 @@
 <title>GeoTopo Web</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   :root{
@@ -3322,6 +3323,106 @@ function limpiarMapa() {
 //  EXPORTAR DXF (usa DXFWriter del HTML de referencia)
 // ══════════════════════════════════════════════════════════════
 
+// ══════════════════════════════════════════════════════════════
+//  EMPAQUETADOR ZIP — Genera ZIP con archivo + LICENCIA.txt
+// ══════════════════════════════════════════════════════════════
+function _generarLicencia() {
+  var fecha = new Date().toLocaleDateString('es-CL',{year:'numeric',month:'long',day:'numeric'});
+  var area  = G.bbox?(((G.bbox.lat_max-G.bbox.lat_min)*111.32)*((G.bbox.lon_max-G.bbox.lon_min)*111.32*Math.cos((G.bbox.lat_max+G.bbox.lat_min)/2*Math.PI/180))).toFixed(3):'—';
+  var zona  = G.bbox?((G.bbox.lat_min+G.bbox.lat_max)/2).toFixed(4)+'°, '+((G.bbox.lon_min+G.bbox.lon_max)/2).toFixed(4)+'°':'—';
+  return [
+    '╔══════════════════════════════════════════════════════════════╗',
+    '║                    GEOTOPO WEB — LICENCIA                   ║',
+    '╚══════════════════════════════════════════════════════════════╝',
+    '',
+    'Proyecto   : '+(G.nombre||'Sin nombre'),
+    'Fecha      : '+fecha,
+    'Área       : '+area+' km²',
+    'Centroide  : '+zona,
+    'Generado   : GeoTopo Web · jfsasesorias3001@gmail.com',
+    '',
+    '──────────────────────────────────────────────────────────────',
+    'AVISO IMPORTANTE — LEER ANTES DE USAR',
+    '──────────────────────────────────────────────────────────────',
+    '',
+    'Los archivos contenidos en este paquete han sido generados a',
+    'partir de datos cartográficos de acceso público. GeoTopo Web',
+    'y JFS Asesorías no se responsabilizan por errores, inexacti-',
+    'tudes o inconsistencias en los datos exportados.',
+    '',
+    'ESTE ARCHIVO NO REEMPLAZA LA TOPOGRAFÍA DE TERRENO.',
+    '',
+    'Los datos de elevación provienen de modelos digitales globales',
+    'con resolución de 30 metros (SRTM/ASTER). Para proyectos que',
+    'requieran precisión topográfica, es OBLIGATORIO realizar un',
+    'levantamiento topográfico en terreno por un profesional',
+    'habilitado (topógrafo o ingeniero civil).',
+    '',
+    '──────────────────────────────────────────────────────────────',
+    'FUENTES DE DATOS Y LICENCIAS',
+    '──────────────────────────────────────────────────────────────',
+    '',
+    '• Elevaciones (30m) : NASA SRTM / ASTER GDEM — Dominio público',
+    '• Edificios 3D      : OpenStreetMap © contribuidores (ODbL)',
+    '• Calles y caminos  : OpenStreetMap © contribuidores (ODbL)',
+    '• Ferrocarriles     : OpenStreetMap © contribuidores (ODbL)',
+    '• Cursos de agua    : OpenStreetMap © contribuidores (ODbL)',
+    '• Árboles           : OpenStreetMap © contribuidores (ODbL)',
+    '• Áreas verdes      : OpenStreetMap © contribuidores (ODbL)',
+    '• Mapa interactivo  : Leaflet · OpenStreetMap',
+    '',
+    'Licencia ODbL: https://opendatacommons.org/licenses/odbl/',
+    'OpenStreetMap: https://www.openstreetmap.org/copyright',
+    '',
+    '──────────────────────────────────────────────────────────────',
+    'USO PERMITIDO',
+    '──────────────────────────────────────────────────────────────',
+    '',
+    '✓ Uso personal y profesional permitido con atribución',
+    '✓ Uso en proyectos comerciales permitido con atribución',
+    '✓ Modificación de los datos permitida',
+    '✗ No redistribuir sin mantener esta licencia',
+    '✗ No usar como reemplazo de topografía oficial certificada',
+    '',
+    '──────────────────────────────────────────────────────────────',
+    'CONTACTO',
+    '──────────────────────────────────────────────────────────────',
+    '',
+    'JFS Asesorías · Wladimir Campos',
+    'Email   : jfsasesorias3001@gmail.com',
+    'Teléfono: +56 9 20606591',
+    '',
+    '══════════════════════════════════════════════════════════════',
+  ].join('\r\n');
+}
+
+function _zipNombre() {
+  var d=new Date(), pad=function(n){return n.toString().padStart(2,'0');};
+  return 'GeoTopo_'+d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate())+'_'+pad(d.getHours())+pad(d.getMinutes())+pad(d.getSeconds());
+}
+
+async function _descargarZIP(nombreArchivo, contenido, esBinario) {
+  if (typeof JSZip==='undefined') {
+    // Fallback sin JSZip — descarga directa
+    var blob2=new Blob([contenido],{type:'application/octet-stream'});
+    var a2=document.createElement('a'); a2.href=URL.createObjectURL(blob2);
+    a2.download=nombreArchivo; document.body.appendChild(a2); a2.click();
+    setTimeout(function(){document.body.removeChild(a2);URL.revokeObjectURL(a2.href);},1000);
+    return;
+  }
+  var zip=new JSZip();
+  var carpeta=_zipNombre();
+  zip.file(carpeta+'/'+nombreArchivo, contenido);
+  zip.file(carpeta+'/LICENCIA.txt', _generarLicencia());
+  var blob=await zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:6}});
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=carpeta+'.zip';
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){document.body.removeChild(a);URL.revokeObjectURL(a.href);},1000);
+  sb('✓ Descargado: '+carpeta+'.zip','ok');
+}
+
 function descargarKML() {
   if (!G.pts_xyz.length && !G.caminos.length && !G.edificios.length && !G.leisure.length && !G.zonas.length){ alert('Primero importa un área o datos OSM.'); return; }
   var nm=G.nombre, fecha=new Date().toISOString().slice(0,10);
@@ -3649,12 +3750,7 @@ function descargarKML() {
   }
 
   L2.push('</Document></kml>');
-  var blob=new Blob([L2.join('\n')],{type:'application/vnd.google-earth.kml+xml'});
-  var url=URL.createObjectURL(blob);
-  var a=document.createElement('a');
-  a.href=url;a.download=nm+'_topo.kml';a.style.display='none';
-  document.body.appendChild(a);a.click();
-  setTimeout(function(){document.body.removeChild(a);URL.revokeObjectURL(url);},1000);
+  _descargarZIP(nm+'_topo.kml', L2.join('\n'), false);
   sb('✓ '+nm+'_topo.kml descargado','ok');
 }
 
@@ -3855,11 +3951,7 @@ function descargarDXF() {
   }
 
   var content = dxf.generate();
-  var blob = new Blob([content],{type:'application/octet-stream'});
-  var url  = URL.createObjectURL(blob);
-  var a    = document.createElement('a');
-  a.href=url; a.download=nm+'_topo.dxf'; a.style.display='none';
-  document.body.appendChild(a); a.click();
+  _descargarZIP(nm+'_topo.dxf', content, false);
   setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(url); },1000);
   sb('✓ '+nm+'_topo.dxf descargado','ok');
 }
@@ -4134,12 +4226,7 @@ function descargarOBJ() {
     });
   }
 
-  var _blob=new Blob([lines.join('\n')],{type:'model/obj'});
-  var _url=URL.createObjectURL(_blob);
-  var _a=document.createElement('a');
-  _a.href=_url; _a.download=G.nombre+'_topo.obj'; _a.style.display='none';
-  document.body.appendChild(_a); _a.click();
-  setTimeout(function(){document.body.removeChild(_a);URL.revokeObjectURL(_url);},1000);
+  _descargarZIP(G.nombre+'_topo.obj', lines.join('\n'), false);
   sb('✓ OBJ exportado: '+G.nombre+'_topo.obj','ok');
 }
 
@@ -4246,12 +4333,7 @@ function descargarSTL() {
   }
 
   lines.push('endsolid '+G.nombre);
-  var _blob=new Blob([lines.join('\n')],{type:'model/stl'});
-  var _url=URL.createObjectURL(_blob);
-  var _a=document.createElement('a');
-  _a.href=_url; _a.download=G.nombre+'_topo.stl'; _a.style.display='none';
-  document.body.appendChild(_a); _a.click();
-  setTimeout(function(){document.body.removeChild(_a);URL.revokeObjectURL(_url);},1000);
+  _descargarZIP(G.nombre+'_topo.stl', lines.join('\n'), false);
   sb('✓ STL exportado: '+G.tris.length+' facetas','ok');
 }
 
@@ -4401,12 +4483,7 @@ function descargarIFC() {
   lines.push('ENDSEC;');
   lines.push('END-ISO-10303-21;');
 
-  var _blob=new Blob([lines.join('\n')],{type:'application/x-step'});
-  var _url=URL.createObjectURL(_blob);
-  var _a=document.createElement('a');
-  _a.href=_url; _a.download=nm+'_topo.ifc'; _a.style.display='none';
-  document.body.appendChild(_a); _a.click();
-  setTimeout(function(){document.body.removeChild(_a);URL.revokeObjectURL(_url);},1000);
+  _descargarZIP(nm+'_topo.ifc', lines.join('\n'), false);
   sb('✓ IFC exportado: '+G.tris.length+' facetas, '+G.edificios.length+' edificios','ok');
 }
 
@@ -4977,12 +5054,8 @@ function pf_exportKML(){
     '<altitudeMode>clampToGround</altitudeMode>\n'+
     '<coordinates>\n'+coords+'\n</coordinates></LineString></Placemark>\n'+
     '    '+placemarks+'\n</Document></kml>';
-  var blob=new Blob([kml],{type:'application/vnd.google-earth.kml+xml'});
-  var url=URL.createObjectURL(blob);
-  var a=document.createElement('a');
-  a.href=url;a.download=nombre+'_perfil.kml';a.click();
-  setTimeout(function(){URL.revokeObjectURL(url);},2000);
-  sb('✓ KML exportado','ok');
+  _descargarZIP(nombre+'_perfil.kml', kml, false);
+  sb('✓ KML perfil exportado','ok');
 }
 
 // ── DXF con cajetín AutoCAD (basado en perfil-longitudinal-modificado.html)
@@ -5095,12 +5168,7 @@ function pf_exportDXF(){
   D.push('0\nENDSEC\n0\nEOF\n');
 
   var content=D.join('');
-  var blob=new Blob([content],{type:'application/octet-stream'});
-  var url=URL.createObjectURL(blob);
-  var a=document.createElement('a');
-  a.href=url;a.download=GP.nombre+'_perfil.dxf';a.style.display='none';
-  document.body.appendChild(a);a.click();
-  setTimeout(function(){document.body.removeChild(a);URL.revokeObjectURL(url);},1000);
+  _descargarZIP(GP.nombre+'_perfil.dxf', content, false);
   sb('✓ DXF perfil exportado con cajetín AutoCAD','ok');
 }
 
