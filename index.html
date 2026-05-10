@@ -1414,7 +1414,13 @@ async function bajarCaminos(hCam, hAgua, hDesl, hEdif, hArb, hCat) {
     partes.push('way["amenity"~"hospital|school|university|college|kindergarten|marketplace|theatre|cinema|place_of_worship|townhall|fire_station|police|prison|courthouse"]('+bb+');');
     // Man_made como estructuras verticales extruibles
     partes.push('way["man_made"~"water_tower|silo|chimney|tower|storage_tank|gasometer|reservoir_covered"]('+bb+');');
-    partes.push('node["man_made"~"water_tower|chimney|tower"]('+bb+');');
+    partes.push('node["man_made"~"water_tower|chimney|tower|obelisk"]('+bb+');');
+  // Estructuras emblemáticas: obeliscos, monumentos, estatuas, esculturas
+  partes.push('node["man_made"="obelisk"]('+bb+');');
+  partes.push('node["historic"~"monument|memorial"]('+bb+');');
+  partes.push('node["memorial"~"statue|obelisk|monument|column"]('+bb+');');
+  partes.push('node["tourism"="artwork"]["artwork_type"~"statue|sculpture|obelisk"]('+bb+');');
+  partes.push('way["man_made"="obelisk"]('+bb+');');
     // Tags de estadio usados internacionalmente que no usan building=stadium
     partes.push('way["sport"]('+bb+');');  // sport=* sin building → campos deportivos con estructura
     partes.push('way["leisure"~"stadium|sports_centre|sports_hall|fitness_centre"]('+bb+');');
@@ -1903,6 +1909,92 @@ async function bajarCaminos(hCam, hAgua, hDesl, hEdif, hArb, hCat) {
           nombre:tags.name||luVal,color:ZONA_COLORS[luVal]});
     }
   });
+  // ── Estructuras emblemáticas: obeliscos, monumentos, estatuas ──────
+  // Nodos OSM con man_made=obelisk, historic=monument, memorial=statue, etc.
+  // Se generan como geometría 3D sintética poligonal en G.edificios
+  if (hEdif || hHistoric || hTurismo) {
+    data.elements.forEach(function(el) {
+      if (el.type !== 'node' || !el.tags) return;
+      var tags = el.tags;
+      var mm   = tags.man_made || '';
+      var hist = tags.historic || '';
+      var mem  = tags.memorial || '';
+      var art  = tags.artwork_type || '';
+      var tour = tags.tourism || '';
+
+      // ¿Es una estructura emblemática?
+      var esEmblem = mm==='obelisk' ||
+        (hist==='monument'&&!tags.building) ||
+        mem==='statue'||mem==='obelisk'||mem==='monument'||mem==='column' ||
+        (tour==='artwork'&&(art==='statue'||art==='sculpture'||art==='obelisk'));
+      if (!esEmblem) return;
+
+      var u = calcUTM(el.lat, el.lon);
+      var cx = +(u.e-G.e0).toFixed(3), cy = +(u.n-G.n0).toFixed(3);
+      if (cx<_bxMin||cx>_bxMax||cy<_byMin||cy>_byMax) return;
+
+      var zb = interpZ(u.e-G.e0, u.n-G.n0) || 0;
+      var h  = parseFloat(tags.height||tags['building:height']||0);
+      var nombre = tags.name || tags['name:es'] || tags['name:en'] || '';
+
+      // Determinar tipo y altura por defecto si no tiene height=*
+      var tipo = 'monumento';
+      if (mm==='obelisk'||mem==='obelisk'||art==='obelisk') {
+        tipo = 'obelisco';
+        if (!h) h = 20; // altura por defecto obelisco
+      } else if (mem==='statue'||art==='statue'||art==='sculpture') {
+        tipo = 'estatua';
+        if (!h) h = 5;
+      } else if (mem==='column') {
+        tipo = 'columna';
+        if (!h) h = 15;
+      } else {
+        if (!h) h = 10;
+      }
+      if (h < 0.5) return; // ignorar si muy pequeño
+
+      // Generar polígono base según tipo
+      var base = [];
+      if (tipo === 'obelisco') {
+        // Base cuadrada ~h/10 de lado
+        var s = Math.max(1, h/10);
+        base = [{x:cx-s,y:cy-s},{x:cx+s,y:cy-s},{x:cx+s,y:cy+s},{x:cx-s,y:cy+s},{x:cx-s,y:cy-s}];
+      } else if (tipo === 'estatua' || tipo === 'columna') {
+        // Base circular aproximada (octógono)
+        var r = Math.max(0.8, h/15);
+        for (var ai=0; ai<=8; ai++) {
+          var ang = ai/8*Math.PI*2;
+          base.push({x:cx+r*Math.cos(ang), y:cy+r*Math.sin(ang)});
+        }
+      } else {
+        // Monumento genérico — base cuadrada
+        var sm = Math.max(1.5, h/8);
+        base = [{x:cx-sm,y:cy-sm},{x:cx+sm,y:cy-sm},{x:cx+sm,y:cy+sm},{x:cx-sm,y:cy+sm},{x:cx-sm,y:cy-sm}];
+      }
+      base.forEach(function(p){ p.z = zb; });
+
+      var COLOR_EMBLEM = {
+        obelisco: '#e2e8f0', estatua: '#d4b896', columna: '#e8dcc8', monumento: '#f0e8d8'
+      };
+
+      G.edificios.push({
+        pts:       base,
+        z_base:    zb,
+        altura:    h,
+        altMin:    0,
+        altTejado: tipo==='obelisco' ? h*0.2 : 0,
+        roofShape: tipo==='obelisco' ? 'pyramidal' : tipo==='estatua' ? 'dome' : 'flat',
+        color:     COLOR_EMBLEM[tipo] || '#e2e8f0',
+        roofColor: '#c8b89a',
+        tipo:      tipo,
+        nombre:    nombre || (tipo.charAt(0).toUpperCase()+tipo.slice(1)),
+        niveles:   1,
+        inners:    [],
+        esEmblem:  true  // flag para renderizado especial en 3D
+      });
+    });
+  }
+
   // Procesar árboles (nodos OSM)
   if (hArb) {
     data.elements.forEach(function(el){
@@ -3086,7 +3178,8 @@ function dibujar() {
     var tip='<b>'+(ed.nombre||ed.tipo||'Edificio')+'</b>'+
       (ed.niveles>1?'<br>'+ed.niveles+' pisos':'')+
       '<br>Base: '+zb2.toFixed(1)+'m · Techo: '+zt2.toFixed(1)+'m · Alt: '+ed.altura.toFixed(1)+'m'+
-      (ed.roofShape&&ed.roofShape!=='flat'?'<br>Tejado: '+ed.roofShape:'');
+      (ed.roofShape&&ed.roofShape!=='flat'?'<br>Tejado: '+ed.roofShape:'')+
+      (ed.esEmblem?'<br><b>⭐ Estructura emblemática</b>':'');
     poly.bindTooltip(tip,{sticky:true});
     poly.addTo(map); mapaCapas.push(poly);
     // Indicador de tejado en planta (solo si no es flat)
@@ -6383,6 +6476,54 @@ function _v3_buildScene(){
       // Sin inners: techo normal según tipo
       var rs = ed.roofShape||'flat';
       var altT = ed.altTejado||0;
+
+      // ── Geometría especial para estructuras emblemáticas ─────
+      if (ed.esEmblem && ed.tipo === 'obelisco') {
+        // Obelisco: cuerpo tapered (se estrecha) + punta piramidal
+        var cxO=0,cyO=0; ed.pts.forEach(function(p){cxO+=p.x;cyO+=p.y;}); cxO/=ed.pts.length; cyO/=ed.pts.length;
+        var sBase=0; ed.pts.forEach(function(p){sBase+=Math.sqrt((p.x-cxO)*(p.x-cxO)+(p.y-cyO)*(p.y-cyO));}); sBase/=ed.pts.length;
+        // Cuerpo: pirámide invertida truncada (SimpleExtrudeGeometry no existe en r128 — usar CylinderGeometry como aproximación cuadrada)
+        var obH = (ed.altura||20) * escala * 0.9;
+        var obBase = sBase * escala;
+        var obTop  = obBase * 0.25;
+        var obGeo  = new THREE.CylinderGeometry(obTop, obBase, obH, 4); // 4 lados = cuadrado
+        var obMat  = new THREE.MeshLambertMaterial({color:0xe2e8f0});
+        var obMesh = new THREE.Mesh(obGeo, obMat);
+        var obX = (cxO-cx)*escala, obZ = -(cyO-cy)*escala;
+        obMesh.position.set(obX, zb*escala + obH/2, obZ);
+        obMesh.rotation.y = Math.PI/4; // rotar 45° para que los vértices apunten a los lados
+        _v3.edifGroup.add(obMesh);
+        // Punta piramidal
+        var puntaH = (ed.altura||20)*escala*0.12;
+        var puntaGeo = new THREE.ConeGeometry(obTop, puntaH, 4);
+        var puntaMesh = new THREE.Mesh(puntaGeo, new THREE.MeshLambertMaterial({color:0xd4c5a0}));
+        puntaMesh.position.set(obX, zb*escala + obH + puntaH/2, obZ);
+        puntaMesh.rotation.y = Math.PI/4;
+        _v3.edifGroup.add(puntaMesh);
+        return; // saltar renderizado estándar
+      }
+
+      if (ed.esEmblem && ed.tipo === 'estatua') {
+        // Estatua: pedestal + figura cilíndrica
+        var cxE=0,cyE=0; ed.pts.forEach(function(p){cxE+=p.x;cyE+=p.y;}); cxE/=ed.pts.length; cyE/=ed.pts.length;
+        var rE = 0.8*escala;
+        var hTotal = (ed.altura||5)*escala;
+        var hPed   = hTotal*0.3;
+        var hFig   = hTotal*0.7;
+        var exE = (cxE-cx)*escala, ezE = -(cyE-cy)*escala;
+        // Pedestal
+        var pedGeo  = new THREE.BoxGeometry(rE*2.5,hPed,rE*2.5);
+        var pedMesh = new THREE.Mesh(pedGeo, new THREE.MeshLambertMaterial({color:0xd4b896}));
+        pedMesh.position.set(exE, zb*escala+hPed/2, ezE);
+        _v3.edifGroup.add(pedMesh);
+        // Figura
+        var figGeo  = new THREE.CylinderGeometry(rE*0.4, rE*0.6, hFig, 8);
+        var figMesh = new THREE.Mesh(figGeo, new THREE.MeshLambertMaterial({color:0xb8a888}));
+        figMesh.position.set(exE, zb*escala+hPed+hFig/2, ezE);
+        _v3.edifGroup.add(figMesh);
+        return;
+      }
+
       if(['gabled','hipped','half-hipped','gambrel','mansard','pyramidal'].indexOf(rs)>=0){
         _roofPeak(ed, zt, altT, matRoof);
       } else if(rs==='dome'){
