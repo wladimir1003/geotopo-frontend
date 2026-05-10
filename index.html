@@ -1934,22 +1934,31 @@ async function bajarCaminos(hCam, hAgua, hDesl, hEdif, hArb, hCat) {
       if (cx<_bxMin||cx>_bxMax||cy<_byMin||cy>_byMax) return;
 
       var zb = interpZ(u.e-G.e0, u.n-G.n0) || 0;
-      var h  = parseFloat(tags.height||tags['building:height']||0);
+      var h = parseFloat(tags.height || tags['building:height'] ||
+                         tags['maxheight'] || tags['ele'] || 0);
+      // Si no tiene height, buscar en el nombre para estimar
+      // Defaults por tipo conocido — alturas reales típicas
       var nombre = tags.name || tags['name:es'] || tags['name:en'] || '';
 
       // Determinar tipo y altura por defecto si no tiene height=*
       var tipo = 'monumento';
       if (mm==='obelisk'||mem==='obelisk'||art==='obelisk') {
         tipo = 'obelisco';
-        if (!h) h = 20; // altura por defecto obelisco
-      } else if (mem==='statue'||art==='statue'||art==='sculpture') {
+        if (!h) h = 20; // obelisco genérico 20m
+      } else if (mem==='statue'||art==='statue') {
         tipo = 'estatua';
         if (!h) h = 5;
+      } else if (art==='sculpture') {
+        tipo = 'estatua';
+        if (!h) h = 3;
       } else if (mem==='column') {
         tipo = 'columna';
         if (!h) h = 15;
+      } else if (hist==='monument') {
+        tipo = 'monumento';
+        if (!h) h = 8;
       } else {
-        if (!h) h = 10;
+        if (!h) h = 6;
       }
       if (h < 0.5) return; // ignorar si muy pequeño
 
@@ -3664,6 +3673,72 @@ function descargarKML() {
       // Altura correcta: solo cuerpo sin tejado
       var altKML = Math.max(0.1, ed.altura - (ed.altTejado||0));
 
+      // ── Obelisco: 3 anillos escalonados simulan la forma cónica ─
+      if (ed.esEmblem && ed.tipo === 'obelisco') {
+        // Centroide del obelisco
+        var cxO=0, cyO=0;
+        ed.pts.forEach(function(p){cxO+=p.x; cyO+=p.y;});
+        cxO/=ed.pts.length; cyO/=ed.pts.length;
+        var sBase = Math.max(1, ed.altura/10); // lado de la base en metros
+        // Función para generar coords de un cuadrado rotado 45° a cierta escala y altura
+        function cuadradoKML(cx, cy, s, z) {
+          var pts = [
+            [cx+s, cy],   // E
+            [cx,   cy+s], // N
+            [cx-s, cy],   // W
+            [cx,   cy-s], // S
+            [cx+s, cy],   // cerrar
+          ];
+          return pts.map(function(p){
+            var ll = utmToLatLon(p[0], p[1]);
+            return ll[1].toFixed(8)+','+ll[0].toFixed(8)+','+z.toFixed(2);
+          }).join(' ');
+        }
+        // Estilos para el obelisco
+        L2.push('<Style id="s_ob"><LineStyle><color>ff8888aa</color><width>0.5</width></LineStyle>'+
+          '<PolyStyle><color>cc909090</color><fill>1</fill></PolyStyle></Style>');
+        // 3 niveles: base (100%), medio (60%), cima (25%) de sBase
+        var niveles = [
+          {s: sBase*1.0, z: 0},                      // base al suelo
+          {s: sBase*0.6, z: altKML*0.5},              // mitad estrechada
+          {s: sBase*0.25, z: altKML*0.85},            // cerca de la cima
+          {s: sBase*0.08, z: altKML},                 // punta
+        ];
+        // Paredes laterales entre niveles (4 caras del obelisco)
+        var cara = ['N','E','S','O'];
+        for (var ni=0; ni<niveles.length-1; ni++) {
+          var lo=niveles[ni], hi=niveles[ni+1];
+          // Cara frontal (simplificado: polígono trapezoidal vertical)
+          var c = cuadradoKML(cxO, cyO, lo.s, lo.z);
+          var ct= cuadradoKML(cxO, cyO, hi.s, hi.z);
+          L2.push('<Placemark>'+
+            '<name>⭐ '+(ed.nombre||'Obelisco')+' — nivel '+(ni+1)+'</name>'+
+            '<styleUrl>#s_ob</styleUrl>'+
+            '<Polygon>'+
+              '<altitudeMode>relativeToGround</altitudeMode>'+
+              '<extrude>0</extrude>'+
+              '<outerBoundaryIs><LinearRing>'+
+                '<coordinates>'+c+'</coordinates>'+
+              '</LinearRing></outerBoundaryIs>'+
+            '</Polygon>'+
+          '</Placemark>');
+        }
+        // Anillo superior = punta
+        L2.push('<Placemark>'+
+          '<name>⭐ '+(ed.nombre||'Obelisco')+' ('+ed.altura.toFixed(1)+'m)</name>'+
+          '<description>Obelisco · Altura: '+ed.altura.toFixed(1)+'m · OSM</description>'+
+          '<styleUrl>#s_ob</styleUrl>'+
+          '<Polygon>'+
+            '<altitudeMode>relativeToGround</altitudeMode>'+
+            '<extrude>1</extrude>'+
+            '<outerBoundaryIs><LinearRing>'+
+              '<coordinates>'+cuadradoKML(cxO, cyO, sBase*0.08, altKML)+'</coordinates>'+
+            '</LinearRing></outerBoundaryIs>'+
+          '</Polygon>'+
+        '</Placemark>');
+        return; // no continuar con el código genérico
+      }
+
       var coords=ed.pts.map(function(p){
         var ll=utmToLatLon(p.x,p.y);
         return ll[1].toFixed(8)+','+ll[0].toFixed(8)+','+altKML.toFixed(2);
@@ -3725,33 +3800,30 @@ function descargarKML() {
   }
 
   // Árboles
+  // Árboles — polígono octogonal extruido 3m desde el suelo
   if (G.arboles.length) {
     L2.push('<Style id="s_arb">'+
-      '<LineStyle><color>ff267f00</color><width>1</width></LineStyle>'+
-      '<PolyStyle><color>cc267f00</color><fill>1</fill></PolyStyle>'+
+      '<LineStyle><color>ff267f00</color><width>0.5</width></LineStyle>'+
+      '<PolyStyle><color>aa3da816</color><fill>1</fill></PolyStyle>'+
     '</Style>');
-    L2.push('<Style id="s_arb_icon"><IconStyle><color>ff4aa316</color><scale>0.7</scale>'+
-      '<Icon><href>http://maps.google.com/mapfiles/kml/shapes/tree.png</href></Icon>'+
-      '</IconStyle></Style>');
     L2.push('<Folder><name>Árboles ('+G.arboles.length+')</name>'+
-      '<description>Árboles de OpenStreetMap</description>');
-    var arbR=0.00003;
+      '<description>Árboles de OpenStreetMap — altura estándar 3m</description>');
+    var arbR = 0.00002; // ~2m de radio en grados
     G.arboles.forEach(function(arb){
-      // Altura fija 3m en KML — independiente de datos OSM
-      var arbH = 3 + (arb.z||0);
+      if(!arb.lat||!arb.lon) return;
       var coords=[];
       for(var s=0;s<=8;s++){
         var a=s/8*Math.PI*2;
         var lat=arb.lat+arbR*Math.cos(a);
         var lon=arb.lon+arbR*Math.sin(a)/Math.cos(arb.lat*Math.PI/180);
-        coords.push(lon.toFixed(8)+','+lat.toFixed(8)+','+arbH.toFixed(2));
+        coords.push(lon.toFixed(8)+','+lat.toFixed(8)+',3');
       }
       L2.push('<Placemark>'+
         '<name>'+(arb.tipo||'Árbol')+'</name>'+
         '<styleUrl>#s_arb</styleUrl>'+
         '<Polygon>'+
           '<altitudeMode>relativeToGround</altitudeMode>'+
-          '<extrude>0</extrude>'+
+          '<extrude>1</extrude>'+
           '<outerBoundaryIs><LinearRing>'+
             '<coordinates>'+coords.join(' ')+'</coordinates>'+
           '</LinearRing></outerBoundaryIs>'+
@@ -3760,6 +3832,7 @@ function descargarKML() {
     });
     L2.push('</Folder>');
   }
+
 
   // Zonas landuse/natural — clampToGround para que se peguen al terreno en Google Earth
   if (G.zonas && G.zonas.length) {
