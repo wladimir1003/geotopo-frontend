@@ -1934,17 +1934,18 @@ async function bajarCaminos(hCam, hAgua, hDesl, hEdif, hArb, hCat) {
       if (cx<_bxMin||cx>_bxMax||cy<_byMin||cy>_byMax) return;
 
       var zb = interpZ(u.e-G.e0, u.n-G.n0) || 0;
-      var h = parseFloat(tags.height || tags['building:height'] ||
-                         tags['maxheight'] || tags['ele'] || 0);
-      // Si no tiene height, buscar en el nombre para estimar
-      // Defaults por tipo conocido — alturas reales típicas
+      // Leer altura — NUNCA usar 'ele' (es elevación sobre el mar, no altura)
+      var h = parseFloat(tags.height || tags['building:height'] || tags['maxheight'] || 0);
+
       var nombre = tags.name || tags['name:es'] || tags['name:en'] || '';
 
-      // Determinar tipo y altura por defecto si no tiene height=*
+      // Determinar tipo
       var tipo = 'monumento';
       if (mm==='obelisk'||mem==='obelisk'||art==='obelisk') {
         tipo = 'obelisco';
-        if (!h) h = 20; // obelisco genérico 20m
+        // Altura mínima razonable para un obelisco: 10m
+        // Si OSM tiene un valor ridículo (<5m) para un obelisco, ignorarlo
+        if (!h || h < 5) h = 20;
       } else if (mem==='statue'||art==='statue') {
         tipo = 'estatua';
         if (!h) h = 5;
@@ -1953,7 +1954,7 @@ async function bajarCaminos(hCam, hAgua, hDesl, hEdif, hArb, hCat) {
         if (!h) h = 3;
       } else if (mem==='column') {
         tipo = 'columna';
-        if (!h) h = 15;
+        if (!h || h < 3) h = 15;
       } else if (hist==='monument') {
         tipo = 'monumento';
         if (!h) h = 8;
@@ -3939,7 +3940,7 @@ function descargarDXF() {
    'GT-'+nm+'-CAMINO_TIERRA','GT-'+nm+'-DESLINDE',
    'GT-'+nm+'-RIO','GT-'+nm+'-ARROYO','GT-'+nm+'-AGUA',
    'GT-'+nm+'-FERREA','GT-'+nm+'-FERREA_LIGERA','GT-'+nm+'-METRO',
-   'GT-'+nm+'-EDIF','GT-'+nm+'-EDIF-TECHO',
+   'GT-'+nm+'-EDIF','GT-'+nm+'-EDIF-TECHO','GT-'+nm+'-EMBLEMAS',
    'GT-'+nm+'-LEISURE','GT-'+nm+'-ZONAS']
   .forEach(function(l){ dxf.layers.add(l); });
 
@@ -4041,6 +4042,45 @@ function descargarDXF() {
   // 5. Edificios 3D — contorno base/techo + 3DFACE paredes y techo
   G.edificios.forEach(function(ed){
     var lb='GT-'+nm+'-EDIF', lt='GT-'+nm+'-EDIF-TECHO';
+
+    // ── Obelisco DXF: pirámide truncada con 3DFaces escalonadas ─
+    if (ed.esEmblem && ed.tipo === 'obelisco') {
+      var leOb = 'GT-'+nm+'-EMBLEMAS';
+      var cx=0,cy=0; ed.pts.forEach(function(p){cx+=p.x;cy+=p.y;}); cx/=ed.pts.length; cy/=ed.pts.length;
+      var sBase = Math.max(1, ed.altura/10);
+      var zb = ed.z_base;
+      var h  = ed.altura;
+      // 4 niveles del obelisco
+      var niveles = [
+        {s:sBase*1.0, z:zb},
+        {s:sBase*0.7, z:zb+h*0.4},
+        {s:sBase*0.35,z:zb+h*0.8},
+        {s:sBase*0.05,z:zb+h},
+      ];
+      // Generar 4 esquinas de un cuadrado rotado 45° a cada nivel
+      function esquinas(cx,cy,s,z) {
+        return [
+          {x:cx+s+G.e0, y:cy+G.n0,   z:z},
+          {x:cx+G.e0,   y:cy+s+G.n0, z:z},
+          {x:cx-s+G.e0, y:cy+G.n0,   z:z},
+          {x:cx+G.e0,   y:cy-s+G.n0, z:z},
+        ];
+      }
+      // Caras laterales entre niveles
+      for (var ni=0; ni<niveles.length-1; ni++) {
+        var lo = esquinas(cx,cy,niveles[ni].s,  niveles[ni].z);
+        var hi = esquinas(cx,cy,niveles[ni+1].s,niveles[ni+1].z);
+        for (var fi=0; fi<4; fi++) {
+          var f2=(fi+1)%4;
+          dxf.add3DFace(lo[fi],lo[f2],hi[f2],hi[fi],leOb);
+        }
+      }
+      // Base y tope
+      dxf.addPolyline(esquinas(cx,cy,sBase,zb), true, leOb);
+      dxf.addPolyline(esquinas(cx,cy,sBase*0.05,zb+h), true, leOb);
+      return; // no exportar como edificio normal
+    }
+
     var zb=ed.z_base, zt=ed.z_base+ed.altura;
     var n=ed.pts.length;
     var base  = ed.pts.map(function(p){return {x:p.x+G.e0,y:p.y+G.n0,z:zb};});
